@@ -81,7 +81,7 @@ button:focus-visible { outline: 4px solid var(--answer); outline-offset: 3px; }
 <body>
 
 <section class="screen" id="s-start">
-  <div class="brand">듣기 연습<span class="ver">v1.2</span></div>
+  <div class="brand">듣기 연습<span class="ver">v1.3</span></div>
   <p class="lead">잘 듣고 생각해 보시면 잠시 뒤에 답이 나와요.</p>
   <p class="label">무엇을 연습할까요?</p>
   <div class="modes">
@@ -131,7 +131,7 @@ button:focus-visible { outline: 4px solid var(--answer); outline-offset: 3px; }
 <script>
 // Mode ③ "자동으로 답 보기" — values from APP-REQUIREMENTS.md 4.7
 const PLAYS = 2;          // times the word is played before the answer
-const GAP = 800;          // ms between plays
+const GAP = 1500;         // ms between plays (v1.3: was 800)
 const WAIT = 4;           // seconds before the answer shows
 const HOLD = 2500;        // ms the answer stays after its replay
 const RATE = 0.85;
