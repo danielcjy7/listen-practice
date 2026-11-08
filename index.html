@@ -29,7 +29,7 @@ body {
   padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   -webkit-tap-highlight-color: transparent; user-select: none;
 }
-.screen { max-width: 520px; height: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+.screen { max-width: 520px; min-height: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
 .screen[hidden] { display: none; }
 .brand { font-size: 1.6rem; font-weight: 700; display: flex; align-items: baseline; gap: 10px; }
 .ver { font-size: .85rem; font-weight: 400; color: var(--muted); }
@@ -41,6 +41,16 @@ button:focus-visible { outline: 4px solid var(--answer); outline-offset: 3px; }
   background: var(--accent); color: var(--accent-ink); font-size: 2.4rem; font-weight: 700;
   padding: 28px 12px; width: 100%;
 }
+.modes { display: grid; gap: 10px; }
+.mode {
+  background: var(--card); color: var(--ink); border: 3px solid var(--line);
+  font-size: 1.6rem; font-weight: 700; padding: 14px 16px; text-align: left;
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+}
+.mode small { font-size: 1.05rem; font-weight: 400; color: var(--muted); }
+.mode[aria-pressed="true"] { border-color: var(--accent); background: var(--soft); }
+.mode[aria-pressed="true"]::before { content: "✓"; color: var(--accent); margin-right: -4px; }
+.mode:disabled { opacity: .45; }
 .voices { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .voice {
   background: var(--card); color: var(--ink); border: 3px solid var(--line);
@@ -71,8 +81,14 @@ button:focus-visible { outline: 4px solid var(--answer); outline-offset: 3px; }
 <body>
 
 <section class="screen" id="s-start">
-  <div class="brand">듣기 연습<span class="ver">v1.1</span></div>
-  <p class="lead">오늘의 단어 <strong id="count">15</strong>개를 들려 드려요.<br>잘 듣고 생각해 보시면 잠시 뒤에 답이 나와요.</p>
+  <div class="brand">듣기 연습<span class="ver">v1.2</span></div>
+  <p class="lead">잘 듣고 생각해 보시면 잠시 뒤에 답이 나와요.</p>
+  <p class="label">무엇을 연습할까요?</p>
+  <div class="modes">
+    <button class="mode" id="m-mix" type="button" aria-pressed="true"><span>골고루</span><small></small></button>
+    <button class="mode" id="m-hard" type="button" aria-pressed="false"><span>어려운 단어</span><small></small></button>
+    <button class="mode" id="m-wrong" type="button" aria-pressed="false"><span>틀린 단어 다시</span><small></small></button>
+  </div>
   <p class="label">목소리</p>
   <div class="voices">
     <button class="voice" id="v-sunhi" type="button" aria-pressed="true">여자 목소리<small>선히</small></button>
@@ -221,19 +237,67 @@ function finish() {
 }
 
 // words.json holds every sheet word with a group: g1 recently confused (p = weight),
-// g2 heard few times, g3 review, g4 graduated. Each session takes 6 / 5 / 4 of them,
-// least recently heard first, so every run brings a different set.
+// g2 heard few times, g3 review, g4 graduated; d = difficulty 0–3, x = wrong last time.
+// "골고루" takes 6 / 5 / 4 from g1 / g2 / g3, least recently heard first, so every run brings a different set.
+// "어려운 단어" takes hard words (d ≥ 2), "틀린 단어 다시" the words wrong last time (APP-REQUIREMENTS.md 4.10).
 const PICK = { 1: 6, 2: 5, 3: 4 };
+const SIZE = PICK[1] + PICK[2] + PICK[3];
 const WEAK_REST = 2;      // a confused word skips this many sessions before it may come back
+const HARD = 2;
+let mode = 'mix';
+
+const hardWords = () => words.filter(x => x.d >= HARD);
+const wrongWords = () => words.filter(x => x.x);
+
+function setMode(m) {
+  mode = m;
+  save('mode', m);
+  for (const k of ['mix', 'hard', 'wrong']) $('m-' + k).setAttribute('aria-pressed', k === m);
+}
+
+function showCounts() {
+  $('m-hard').querySelector('small').textContent = `${hardWords().length}개 중에서`;
+  const n = wrongWords().length;
+  $('m-wrong').querySelector('small').textContent = n ? `${n}개` : '없어요';
+  $('m-wrong').disabled = !n;
+  if (!n && mode === 'wrong') setMode('mix');
+}
 
 function pickSession() {
   let seen = {};
   try { seen = JSON.parse(load('seen')) || {}; } catch (e) {}
   const session = (Number(load('session')) || 0) + 1;
   const age = w => (w in seen ? session - seen[w] : 1e6);
-  const byWord = new Map(words.map(x => [x.w, x]));
   const chosen = new Map();
   const add = x => { if (x && !chosen.has(x.w)) chosen.set(x.w, x); };
+
+  // least recently heard first (unheard ones in random order)
+  const oldest = (pool, n) => pool
+    .filter(x => !chosen.has(x.w))
+    .map(x => [age(x.w) + Math.random(), x])
+    .sort((a, b) => b[0] - a[0])
+    .slice(0, n)
+    .map(a => a[1]);
+
+  if (mode === 'hard') {
+    oldest(hardWords(), SIZE).forEach(add);
+    words.filter(x => x.d === HARD - 1 && !chosen.has(x.w))
+      .sort((a, b) => b.p - a.p).slice(0, SIZE - chosen.size).forEach(add);
+  } else if (mode === 'wrong') {
+    oldest(wrongWords(), SIZE).forEach(add);
+  } else {
+    pickMix(age, add, chosen, oldest);
+  }
+
+  for (const w of chosen.keys()) seen[w] = session;
+  save('seen', JSON.stringify(seen));
+  save('session', session);
+  return [...chosen.values()];
+}
+
+function pickMix(age, add, chosen, oldest) {
+  const byWord = new Map(words.map(x => [x.w, x]));
+  const inGroups = groups => words.filter(x => groups.includes(x.g));
 
   // recently confused: weighted by p, with its mate when the mate is a sheet word
   const weak = words.filter(x => x.g === 1);
@@ -249,24 +313,12 @@ function pickSession() {
     if (mate && chosen.size < PICK[1]) { add(mate); pool = pool.filter(y => y !== mate); }
   }
 
-  // the rest: least recently heard first (unheard ones in random order)
-  const oldest = (groups, n) => words
-    .filter(x => groups.includes(x.g) && !chosen.has(x.w))
-    .map(x => [age(x.w) + Math.random(), x])
-    .sort((a, b) => b[0] - a[0])
-    .slice(0, n)
-    .map(a => a[1]);
+  // the rest: least recently heard first
   const graduated = Math.random() < 0.3 ? 1 : 0;
-  oldest([2], PICK[2]).forEach(add);
-  oldest([3], PICK[3] - graduated).forEach(add);
-  oldest([4], graduated).forEach(add);
-  const total = PICK[1] + PICK[2] + PICK[3];
-  if (chosen.size < total) oldest([1, 2, 3, 4], total - chosen.size).forEach(add);
-
-  for (const w of chosen.keys()) seen[w] = session;
-  save('seen', JSON.stringify(seen));
-  save('session', session);
-  return [...chosen.values()];
+  oldest(inGroups([2]), PICK[2]).forEach(add);
+  oldest(inGroups([3]), PICK[3] - graduated).forEach(add);
+  oldest(inGroups([4]), graduated).forEach(add);
+  if (chosen.size < SIZE) oldest(words, SIZE - chosen.size).forEach(add);
 }
 
 function begin() {
@@ -283,6 +335,9 @@ function stopSound() {
   audio.pause();
 }
 
+$('m-mix').onclick = () => setMode('mix');
+$('m-hard').onclick = () => setMode('hard');
+$('m-wrong').onclick = () => setMode('wrong');
 $('v-sunhi').onclick = () => setVoice('sunhi');
 $('v-injoon').onclick = () => setVoice('injoon');
 $('start').onclick = begin;
@@ -296,11 +351,13 @@ document.addEventListener('visibilitychange', () => {
 });
 
 setVoice(load('voice') === 'injoon' ? 'injoon' : 'sunhi');
+setMode(['hard', 'wrong'].includes(load('mode')) ? load('mode') : 'mix');
 
 fetch('words.json', { cache: 'no-cache' })
   .then(r => r.json())
   .then(data => {
     words = data;
+    showCounts();
   })
   .catch(() => { $('start').disabled = true; $('start').textContent = '단어를 못 불러왔어요'; });
 
